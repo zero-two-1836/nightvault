@@ -1,3 +1,7 @@
+[![make.fun](https://make.fun/badge/best-stealth-game-20261121-1759.svg)](https://make.fun/bounty/best-stealth-game-20261121-1759)
+[![rank](https://make.fun/badge/best-stealth-game-20261121-1759/zero-two-1836/nightvault/rank.svg)](https://make.fun/bounty/best-stealth-game-20261121-1759)
+[![reward](https://make.fun/badge/best-stealth-game-20261121-1759/zero-two-1836/nightvault/reward.svg)](https://make.fun/bounty/best-stealth-game-20261121-1759)
+
 # Nightvault
 
 A top-down stealth game set in a museum after closing time. You are a thief
