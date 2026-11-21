@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nightvault — a stealth game</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <canvas id="game" width="960" height="640"></canvas>
+  <p class="hint">WASD / arrows to move · Shift to run (loud) · click to throw a coin · M mutes</p>
+</main>
+<script type="module" src="src/main.js"></script>
+<script>
+  // M toggles mute; kept tiny and separate so the modules stay about the game.
+  addEventListener('keydown', (e) => {
+    if (e.code === 'KeyM') document.dispatchEvent(new CustomEvent('nightvault-mute'));
+  });
+</script>
+</body>
+</html>
