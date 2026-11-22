@@ -9,17 +9,19 @@
 // Rows are padded to the full width with wall when loaded, so a short row
 // can never break the level. Guard patrols are waypoint loops in tile
 // coordinates; guards pause at each end and sweep their flashlight.
+// Cameras are fixed domes in tile coordinates too: a centre angle the
+// gaze sweeps around, how wide the sweep runs, and its speed.
 
 export const TILE = 32;
 export const COLS = 30;
 export const ROWS = 20;
 
-const L = (name, subtitle, coins, map, guards) => ({ name, subtitle, coins, map, guards });
+const L = (name, subtitle, coins, map, guards, cameras = []) => ({ name, subtitle, coins, map, guards, cameras });
 
 export const LEVELS = [
   L(
     'The Gallery',
-    'Two guards. Two gems. Learn the cones.',
+    'Two guards, one camera. Learn the cones — and the sweep.',
     2,
     [
       '##############################',
@@ -47,10 +49,14 @@ export const LEVELS = [
       { path: [[6, 15], [6, 3], [6, 11], [13, 11], [13, 8], [13, 11], [6, 11]], speed: 52, pause: 1.4 },
       { path: [[22, 3], [27, 3], [27, 10], [22, 10], [22, 3]], speed: 58, pause: 1.1 },
     ],
+    [
+      // One dome over the central hall, sweeping the crossing south.
+      { x: 15, y: 7, angle: Math.PI / 2, sweep: 0.85, speed: 0.45, phase: 0 },
+    ],
   ),
   L(
     'The Vault Floor',
-    'Crossing patrols. Cases everywhere. Stay low, stay dark.',
+    'Crossing patrols, two cameras. Cases everywhere. Stay low, stay dark.',
     3,
     [
       '##############################',
@@ -79,10 +85,15 @@ export const LEVELS = [
       { path: [[12, 3], [12, 8], [21, 8], [21, 3], [21, 8], [12, 8]], speed: 66, pause: 0.8 },
       { path: [[26, 10], [26, 17], [23, 17], [23, 10], [26, 10]], speed: 60, pause: 1.2 },
     ],
+    [
+      // One over the crossing band looking east, one over the exit room.
+      { x: 10, y: 8, angle: 0, sweep: 0.8, speed: 0.5, phase: 0.6 },
+      { x: 25, y: 10, angle: Math.PI / 2, sweep: 0.7, speed: 0.55, phase: 1.9 },
+    ],
   ),
   L(
     'The Rooftop Garden',
-    'Hedges hide you — if you reach them. Four guards, one way out.',
+    'Hedges hide you — if you reach them. Four guards, two cameras, one way out.',
     3,
     [
       '##############################',
@@ -112,6 +123,11 @@ export const LEVELS = [
       { path: [[23, 12], [25, 12], [23, 12], [23, 17], [25, 17], [23, 17]], speed: 62, pause: 1.0 },
       { path: [[11, 15], [18, 15], [18, 18], [11, 18], [11, 15]], speed: 70, pause: 0.7 },
     ],
+    [
+      // One over the lawn crossing, one sweeping the east lawn westward.
+      { x: 14, y: 5, angle: Math.PI / 2, sweep: 0.9, speed: 0.5, phase: 0.3 },
+      { x: 24, y: 10, angle: Math.PI, sweep: 0.75, speed: 0.6, phase: 2.4 },
+    ],
   ),
 ];
 
@@ -134,7 +150,7 @@ export function buildLevel(index) {
       if (c === 'E') exit = { x: px, y: py, tx: x, ty: y };
     }
   }
-  return { def, grid, start, gems, exit, coinsLeft: def.coins };
+  return { def, grid, start, gems, exit, coinsLeft: def.coins, cameraDefs: def.cameras };
 }
 
 export const SOLID = new Set(['#', 'C', '=']);

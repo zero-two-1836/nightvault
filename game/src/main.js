@@ -13,6 +13,7 @@
 
 import { buildLevel, TILE } from './levels.js';
 import { Guard, anyGuardHears } from './guards.js';
+import { Camera, updateCameras } from './cameras.js';
 import { Player, Coin, RUN_NOISE_RADIUS, COIN_THROW_RANGE } from './player.js';
 import { createInput, WORLD_W, WORLD_H } from './input.js';
 import { drawWorld, drawHud, drawTitle, drawCaught, drawLevelClear, drawWin } from './render.js';
@@ -31,6 +32,7 @@ const game = {
   levelIndex: 0,
   level: null,
   guards: [],
+  cameras: [],
   player: null,
   coin: null,
   coins: 0,
@@ -39,6 +41,7 @@ const game = {
   totalTime: 0,
   spotted: 0,
   guardStepAt: 0,
+  alarmFlash: 0,
 };
 
 function loadLevel(index) {
@@ -46,9 +49,11 @@ function loadLevel(index) {
   game.level = buildLevel(index);
   game.player = new Player(game.level.start);
   game.guards = game.level.def.guards.map((def) => new Guard(def, game.level.grid));
+  game.cameras = game.level.cameraDefs.map((def) => new Camera(def));
   game.coin = null;
   game.coins = game.level.coinsLeft;
   game.time = 0;
+  game.alarmFlash = 0;
   game.state = 'playing';
 }
 
@@ -112,6 +117,15 @@ function step(dt) {
   for (const g of game.guards) g.update(dt, game.player, events);
   const nowChasing = game.guards.some((g) => g.state === 'chase');
   if (nowChasing && !wasChasing) game.spotted += 1;
+
+  // The cameras watch on their own clocks. Trip one and the alarm tells
+  // every guard on the floor exactly where you are standing — they come
+  // and look, which is trouble, but it is not yet a hand on your collar.
+  if (updateCameras(game, dt, events)) {
+    anyGuardHears(game.guards, game.player.x, game.player.y, 100000);
+    game.alarmFlash = 1;
+  }
+  if (game.alarmFlash > 0) game.alarmFlash = Math.max(0, game.alarmFlash - dt * 1.3);
   if (events.includes('alarm')) sound.alarm();
   if (events.includes('caught')) {
     game.state = 'caught';
@@ -157,10 +171,18 @@ function draw() {
 function poseShot(name) {
   if (name === 'cover') {
     loadLevel(0);
-    game.state = 'title';
-    game.player.x = 3.5 * TILE; game.player.y = 9.5 * TILE;
-    game.guards[0].x = 15.5 * TILE; game.guards[0].y = 7.5 * TILE; game.guards[0].angle = 0.4;
+    // A live frame, not the title: the thief stands in the shadow carpet
+    // inside the camera's gaze (its meter past half, the beam gone
+    // magenta), one guard's cone sweeps the hall to the west, a second
+    // patrols the east room under a sparkling gem, and the HUD's alarm
+    // bar tells the whole story at a glance.
+    game.state = 'playing';
+    game.player.x = 13.1 * TILE; game.player.y = 10.3 * TILE;
+    game.player.angle = -0.6;
+    game.guards[0].x = 6.5 * TILE; game.guards[0].y = 7.5 * TILE; game.guards[0].angle = 0.12;
     game.guards[1].x = 24 * TILE; game.guards[1].y = 7.5 * TILE; game.guards[1].angle = 2.6;
+    const cam = game.cameras[0];
+    cam.frozen = true; cam.angle = 2.28; cam.fill = 0.62;
     return;
   }
   if (name === 'sneak') {
@@ -174,6 +196,10 @@ function poseShot(name) {
     game.coin = new Coin(game.player.x, game.player.y, 17.5 * TILE, 2.5 * TILE);
     game.coin.t = 0.55; game.coin.update(0.001);
     game.coins = 1;
+    // Below, the hall camera sweeps across the carpet block, its meter
+    // a third full from glimpsing the toss.
+    const cam = game.cameras[0];
+    cam.frozen = true; cam.angle = 2.45; cam.fill = 0.34;
     return;
   }
   if (name === 'alert') {
@@ -185,6 +211,12 @@ function poseShot(name) {
     g.x = 10.6 * TILE; g.y = 10.8 * TILE; g.angle = 0.65;
     g.alert = 1; g.state = 'chase';
     game.level.gems[1].taken = true;
+    // The crossing camera has nearly filled on the same runner — the
+    // whole floor is about to know where he is.
+    const cam = game.cameras[0];
+    cam.frozen = true; cam.angle = 1.1; cam.fill = 0.85;
+    const cam2 = game.cameras[1];
+    cam2.frozen = true; cam2.angle = Math.PI / 2; cam2.fill = 0.1;
     return;
   }
   if (name === 'clear') {
@@ -197,6 +229,9 @@ function poseShot(name) {
     game.totalTime = 402;
     game.spotted = 2;
     game.state = 'clear';
+    // Behind the panel, the garden cameras sweep on, watching nothing.
+    game.cameras[0].frozen = true; game.cameras[0].angle = 1.2;
+    game.cameras[1].frozen = true; game.cameras[1].angle = 2.8;
     return;
   }
   loadLevel(0);
@@ -219,9 +254,11 @@ function frame(now) {
     game.time += dt;
   } else if (game.state === 'playing') step(dt);
   else if (game.state === 'title') {
-    // The title idles over a live level: guards keep their patrols.
+    // The title idles over a live level: guards keep their patrols and
+    // the cameras keep their sweeps, so the backdrop is the real game.
     const events = [];
     for (const g of game.guards) g.update(dt, { x: -999, y: -999, running: false, moving: false }, events);
+    for (const cam of game.cameras) cam.update(game.time);
     game.time += dt;
   } else {
     game.time += dt;

@@ -1,35 +1,44 @@
 // Nightvault — drawing. Everything is painted on one canvas in code:
 // marble floors and gold trim, indigo shadow carpets, hedges, crates and
-// glass cases for cover, and the flashlight cones — warm white when a
-// guard is calm, amber as its meter fills, red on the chase. The cones are
-// clipped by walls, so what is lit is exactly what is seen.
+// glass cases for cover, paintings on the walls, and two colours of
+// light to read at a glance — the guards' flashlight cones, warm white
+// when calm, amber as a meter fills, red on the chase, and the cameras'
+// cold cyan gaze, which goes violet then magenta as its alarm fills.
+// Both cones are clipped by walls, so what is lit is exactly what is seen.
 
 import { TILE, COLS, ROWS } from './levels.js';
 import { CONE_RANGE, CONE_HALF_ANGLE, lineOfSight } from './vision.js';
+import { CAM_RANGE, CAM_HALF_ANGLE } from './cameras.js';
 import { WORLD_W, WORLD_H } from './input.js';
 
 const INK = '#0b0e1a';
 
-function conePolygon(ctx, grid, guard) {
+// A steady per-tile hash, so the paintings and floor inlay are the same
+// on every visit and never flicker between frames.
+function tileHash(x, y) {
+  let h = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+
+function conePolygon(ctx, grid, x, y, angle, range, halfAngle) {
   // Fan of rays across the cone; each ray stops where sight stops.
   const steps = 26;
   ctx.beginPath();
-  ctx.moveTo(guard.x, guard.y);
+  ctx.moveTo(x, y);
   for (let i = 0; i <= steps; i++) {
-    const a = guard.angle - CONE_HALF_ANGLE + (2 * CONE_HALF_ANGLE * i) / steps;
-    let r = CONE_RANGE;
+    const a = angle - halfAngle + (2 * halfAngle * i) / steps;
     // Binary-search the wall distance along this ray.
     let lo = 0;
-    let hi = CONE_RANGE;
+    let hi = range;
     for (let k = 0; k < 12; k++) {
       const mid = (lo + hi) / 2;
-      const px = guard.x + Math.cos(a) * mid;
-      const py = guard.y + Math.sin(a) * mid;
-      if (lineOfSight(grid, guard.x, guard.y, px, py)) lo = mid;
+      const px = x + Math.cos(a) * mid;
+      const py = y + Math.sin(a) * mid;
+      if (lineOfSight(grid, x, y, px, py)) lo = mid;
       else hi = mid;
     }
-    r = lo;
-    ctx.lineTo(guard.x + Math.cos(a) * r, guard.y + Math.sin(a) * r);
+    ctx.lineTo(x + Math.cos(a) * lo, y + Math.sin(a) * lo);
   }
   ctx.closePath();
 }
@@ -38,6 +47,12 @@ function coneColor(alert, alpha) {
   if (alert >= 0.99) return `rgba(255, 70, 50, ${alpha})`;
   if (alert >= 0.35) return `rgba(255, 176, 66, ${alpha})`;
   return `rgba(255, 240, 190, ${alpha})`;
+}
+
+function camConeColor(fill, alpha) {
+  if (fill >= 0.66) return `rgba(255, 64, 110, ${alpha})`;
+  if (fill >= 0.3) return `rgba(198, 110, 255, ${alpha})`;
+  return `rgba(80, 220, 255, ${alpha})`;
 }
 
 export function drawWorld(ctx, game) {
@@ -56,11 +71,39 @@ export function drawWorld(ctx, game) {
         ctx.fillRect(px, py, TILE, TILE);
         ctx.fillStyle = '#2d3358';
         ctx.fillRect(px + 2, py + 2, TILE - 4, 3);
+        // A painting hangs on some wall faces that overlook a room —
+        // the museum showing off what the night shift is guarding.
+        const below = y + 1 < ROWS ? grid[y + 1][x] : '#';
+        if (below !== '#' && tileHash(x, y) < 0.3) {
+          const art = ['#7a2e35', '#2e5d7a', '#6b5a2e', '#3d6b4f', '#5a2e6b'][Math.floor(tileHash(y, x) * 5)];
+          ctx.fillStyle = '#8a6d2f';
+          ctx.fillRect(px + 6, py + 7, TILE - 12, TILE - 13);
+          ctx.fillStyle = art;
+          ctx.fillRect(px + 8, py + 9, TILE - 16, TILE - 17);
+          ctx.fillStyle = 'rgba(255,255,255,0.20)';
+          ctx.fillRect(px + 10, py + 11, 5, 3);
+        }
         continue;
       }
       // Marble checker, dim so the cones read against it.
-      ctx.fillStyle = (x + y) % 2 === 0 ? '#171b30' : '#141828';
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#12152a' : '#0e1120';
       ctx.fillRect(px, py, TILE, TILE);
+      if (c === '.') {
+        // A faint gold inlay diamond on some open marble — richness
+        // that never shouts over the light.
+        const h = tileHash(x, y);
+        if (h > 0.42 && h < 0.5) {
+          ctx.strokeStyle = 'rgba(201, 162, 39, 0.13)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(px + 16, py + 8);
+          ctx.lineTo(px + 24, py + 16);
+          ctx.lineTo(px + 16, py + 24);
+          ctx.lineTo(px + 8, py + 16);
+          ctx.closePath();
+          ctx.stroke();
+        }
+      }
       if (c === ',') {
         ctx.fillStyle = '#241d4d';
         ctx.fillRect(px + 1, py + 1, TILE - 2, TILE - 2);
@@ -114,13 +157,22 @@ export function drawWorld(ctx, game) {
   drawExit(ctx, game);
   for (const gem of game.level.gems) if (!gem.taken) drawGem(ctx, gem, game.time);
 
-  // Flashlight cones, additively over the dark floor.
+  // Light cones, additively over the dark floor: first the cameras'
+  // cold gaze, then the guards' warm flashlights over it.
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
+  for (const cam of game.cameras) {
+    conePolygon(ctx, grid, cam.x, cam.y, cam.angle, CAM_RANGE, CAM_HALF_ANGLE);
+    const grad = ctx.createRadialGradient(cam.x, cam.y, 4, cam.x, cam.y, CAM_RANGE);
+    grad.addColorStop(0, camConeColor(cam.fill, 0.3));
+    grad.addColorStop(1, camConeColor(cam.fill, 0.02));
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
   for (const g of game.guards) {
-    conePolygon(ctx, grid, g);
+    conePolygon(ctx, grid, g.x, g.y, g.angle, CONE_RANGE, CONE_HALF_ANGLE);
     const grad = ctx.createRadialGradient(g.x, g.y, 4, g.x, g.y, CONE_RANGE);
-    grad.addColorStop(0, coneColor(g.alert, 0.34));
+    grad.addColorStop(0, coneColor(g.alert, 0.38));
     grad.addColorStop(1, coneColor(g.alert, 0.02));
     ctx.fillStyle = grad;
     ctx.fill();
@@ -128,8 +180,68 @@ export function drawWorld(ctx, game) {
   ctx.restore();
 
   if (game.coin) drawCoin(ctx, game.coin);
+  for (const cam of game.cameras) drawCamera(ctx, cam);
   for (const g of game.guards) drawGuard(ctx, g, game.time);
   drawPlayer(ctx, game.player, game.time);
+
+  // A vignette to deepen the dark at the room's edges, so lit ground
+  // reads as safety and the black reads as risk.
+  const vg = ctx.createRadialGradient(WORLD_W / 2, WORLD_H / 2, WORLD_H * 0.42, WORLD_W / 2, WORLD_H / 2, WORLD_H * 0.88);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.4)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+  // The alarm's flash, on the frame it trips and fading after.
+  if (game.alarmFlash > 0.02) {
+    ctx.strokeStyle = `rgba(255, 50, 40, ${0.55 * game.alarmFlash})`;
+    ctx.lineWidth = 10;
+    ctx.strokeRect(5, 5, WORLD_W - 10, WORLD_H - 10);
+  }
+}
+
+function drawCamera(ctx, cam) {
+  // The fill ring first, in the cone's own colours, so a camera about
+  // to trip reads from across the room.
+  if (cam.fill > 0.02) {
+    ctx.strokeStyle = camConeColor(cam.fill, 0.95);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cam.x, cam.y, 12.5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cam.fill);
+    ctx.stroke();
+  }
+  // Ceiling dome: a dark housing, a glass belly, the lens turned the
+  // way the gaze points, and the little red eye that brightens as the
+  // meter fills.
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(cam.x, cam.y + 7, 8.6, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#2a3350';
+  ctx.beginPath();
+  ctx.arc(cam.x, cam.y, 8.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#54628c';
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.fillStyle = '#10182e';
+  ctx.beginPath();
+  ctx.arc(cam.x, cam.y, 5.6, 0, Math.PI * 2);
+  ctx.fill();
+  const lx = cam.x + Math.cos(cam.angle) * 3.1;
+  const ly = cam.y + Math.sin(cam.angle) * 3.1;
+  ctx.fillStyle = '#0a0f1e';
+  ctx.beginPath();
+  ctx.arc(lx, ly, 2.9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(140, 230, 255, 0.85)';
+  ctx.beginPath();
+  ctx.arc(lx - 0.8, ly - 0.8, 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = `rgba(255, 60, 50, ${0.3 + 0.7 * cam.fill})`;
+  ctx.beginPath();
+  ctx.arc(cam.x, cam.y - 6.4, 1.7, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawExit(ctx, game) {
@@ -151,7 +263,8 @@ function drawExit(ctx, game) {
   ctx.closePath();
   ctx.fill();
   if (open) {
-    ctx.fillStyle = 'rgba(61, 220, 151, 0.16)';
+    const pulse = 0.13 + 0.07 * Math.sin(game.time * 3.2);
+    ctx.fillStyle = `rgba(61, 220, 151, ${pulse})`;
     ctx.fillRect(px - 6, py - 6, TILE + 12, TILE + 12);
   }
 }
@@ -159,6 +272,19 @@ function drawExit(ctx, game) {
 function drawGem(ctx, gem, time) {
   const bob = Math.sin(time * 2.4 + gem.bob) * 2.5;
   const y = gem.y + bob;
+  // The pedestal it floats over: a dark plinth with a gold rim, so the
+  // loot sits in the room instead of hovering over the marble.
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath();
+  ctx.ellipse(gem.x, gem.y + 10, 10.5, 3.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#241d10';
+  ctx.beginPath();
+  ctx.ellipse(gem.x, gem.y + 8.6, 9, 3.1, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#c9a227';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
   ctx.save();
   ctx.translate(gem.x, y);
   ctx.fillStyle = 'rgba(94, 234, 255, 0.18)';
@@ -182,6 +308,23 @@ function drawGem(ctx, gem, time) {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+  // Sparkles on a slow orbit, twinkling in turn — the loot advertises
+  // itself across a dark room, which is the whole temptation.
+  for (let i = 0; i < 3; i++) {
+    const a = time * 1.6 + gem.bob + (i * Math.PI * 2) / 3;
+    const sx = gem.x + Math.cos(a) * 13.5;
+    const sy = y + Math.sin(a) * 10;
+    const tw = 0.35 + 0.65 * Math.abs(Math.sin(time * 2.2 + gem.bob * 2 + i * 2.1));
+    const s = 3.4 * tw;
+    ctx.strokeStyle = `rgba(234, 252, 255, ${0.75 * tw})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(sx - s, sy);
+    ctx.lineTo(sx + s, sy);
+    ctx.moveTo(sx, sy - s);
+    ctx.lineTo(sx, sy + s);
+    ctx.stroke();
+  }
 }
 
 function drawCoin(ctx, coin) {
@@ -290,6 +433,19 @@ export function drawHud(ctx, game) {
     ctx.fillStyle = maxAlert >= 0.99 ? '#ff4632' : maxAlert >= 0.35 ? '#ffb042' : '#ffe9a8';
     ctx.fillRect(WORLD_W / 2 - 70, 36, 140 * maxAlert, 5);
   }
+  // The loudest camera's meter under it, in the cameras' own colours —
+  // the alarm line: fill it and every guard hears where you are.
+  const maxCam = Math.max(0, ...game.cameras.map((c) => c.fill));
+  if (maxCam > 0.02) {
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillRect(WORLD_W / 2 - 70, 44, 140, 4);
+    ctx.fillStyle = maxCam >= 0.66 ? '#ff4078' : maxCam >= 0.3 ? '#c66eff' : '#50dcff';
+    ctx.fillRect(WORLD_W / 2 - 70, 44, 140 * maxCam, 4);
+    ctx.fillStyle = '#9fd8e8';
+    ctx.font = '600 8px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('CAM', WORLD_W / 2 - 75, 48);
+  }
 }
 
 function panel(ctx, title, lines, accent = '#5eeaff') {
@@ -319,6 +475,7 @@ export function drawTitle(ctx, game) {
   ctx.fillStyle = '#9fb4c8';
   ctx.fillText('Move: WASD / arrows · Run: Shift (loud) · Throw a coin: click · Stay in shadow and hedges', WORLD_W / 2, 322);
   ctx.fillText('A filling ring means you are being seen — break the cone before it closes.', WORLD_W / 2, 348);
+  ctx.fillText('Ceiling cameras sweep on their own clocks — fill a camera\u2019s gaze and every guard hears where you stand.', WORLD_W / 2, 374);
   ctx.fillStyle = '#5eeaff';
   ctx.font = '600 18px system-ui, sans-serif';
   ctx.fillText('Press Enter or click to begin the first heist', WORLD_W / 2, 408);
